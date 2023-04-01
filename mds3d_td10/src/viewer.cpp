@@ -147,21 +147,23 @@ void Viewer::drawArticulatedArm() {
   // facteur d'échelle uniforme pour tracer les joints
   float jointScale = 0.2f;
 
-  // TODO: pour l'instant tous les joints et segments sont tracé avec l'identité
-  //       comme matrice de transformation, sauf les joints auxquels on a déjà
-  //       appliqué une mise à l'échelle uniforme.
-
+  // New code : draw each segment and joint.
   int n = int(_lengths.size()); // number of segments
   for (int i = 0; i < n; ++i) {
+    // Draw joint.
     setObjectMatrix(_shader, (M * Scaling(jointScale)).matrix());
     glUniform3fv(_shader.getUniformLocation("color"), 1,
                  Vector3f(0.8f, 0.4f, 0.4f).data());
     _jointMesh.draw(_shader);
 
+    // Draw segment.
     setObjectMatrix(_shader, M.matrix());
     glUniform3fv(_shader.getUniformLocation("color"), 1,
                  Vector3f(0.8f, 0.8f, 0.4f).data());
     _segmentMesh.draw(_shader);
+
+    // Update M for next joint.
+    M = M * Translation3f(_lengths[i], 0, 0) * AngleAxisf(_jointAngles(0, i), Vector3f::UnitX()) * AngleAxisf(_jointAngles(1, i), Vector3f::UnitY());
   }
 }
 
