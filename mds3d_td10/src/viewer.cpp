@@ -140,6 +140,33 @@ void Viewer::setObjectMatrix(Shader &shader, const Matrix4f &M) const {
                      matN.data());
 }
 
+/* Usefull functions :
+
+Affine3f M;
+M.setIdentity();
+M = other_transformation * M;
+  
+M = M * other_transformation;
+// où other_transformation peut être:
+AngleAxisf(float theta, Vector3f axis); // axis est un Vector3f unitaire, par exemple Vector3f::UnitX(), Vector3f::UnitY(), ...
+Scaling(float s);                       // scaling uniforme
+Scaling(float sx, float sy, float sz);  // scaling non-uniforme
+Translation3f(Vector3f t);              // translation du vecteur t
+  
+// Acccès à M:
+M.linear()                              // block 3x3 supérieur gauche
+M.translation()                         // block 3x1 supérieur droit
+M.matrix()                              // matrice 4x4 équivalente (Matrix4f)
+
+Matrix?f A;
+A.col(j)                                // j-ème colonne
+A.row(i)                                // i-ème ligne
+
+Vector3f::UnitX()   // vecteur (1,0,0)
+Vector3f::UnitY()   // vecteur (0,1,0)
+Vector3f::UnitZ()   // vecteur (0,0,1)
+*/
+
 void Viewer::drawArticulatedArm() {
   Affine3f M;
   M.setIdentity();
@@ -147,23 +174,28 @@ void Viewer::drawArticulatedArm() {
   // facteur d'échelle uniforme pour tracer les joints
   float jointScale = 0.2f;
 
-  // New code : draw each segment and joint.
   int n = int(_lengths.size()); // number of segments
   for (int i = 0; i < n; ++i) {
+
     // Draw joint.
+    M = M * AngleAxisf(_jointAngles(0, i), Vector3f::UnitZ());
     setObjectMatrix(_shader, (M * Scaling(jointScale)).matrix());
     glUniform3fv(_shader.getUniformLocation("color"), 1,
                  Vector3f(0.8f, 0.4f, 0.4f).data());
     _jointMesh.draw(_shader);
 
+    // phi = joint angle 0
+    // theta = joint angle 1
+    M = M * AngleAxisf(_jointAngles(1, i), Vector3f::UnitY()); 
+
     // Draw segment.
-    setObjectMatrix(_shader, M.matrix());
+    setObjectMatrix(_shader, (M * Scaling(1.f, 1.f, _lengths[i])).matrix());
     glUniform3fv(_shader.getUniformLocation("color"), 1,
                  Vector3f(0.8f, 0.8f, 0.4f).data());
     _segmentMesh.draw(_shader);
 
-    // Update M for next joint.
-    M = M * Translation3f(_lengths[i], 0, 0) * AngleAxisf(_jointAngles(0, i), Vector3f::UnitX()) * AngleAxisf(_jointAngles(1, i), Vector3f::UnitY());
+    // _length = segment length
+    M = M * Translation3f(0, 0, _lengths[i]);
   }
 }
 
@@ -197,6 +229,40 @@ void Viewer::drawCylinder() {
 void Viewer::updateAndDrawScene() {
   if (_IK_target.norm() > 0) {
     // TODO: réaliser un pas d'IK vers _IK_target
+    // 1. Calculer la position courante de l'extrémité en espace monde. 
+    // 2. Calculer la matrice jacobienne.
+    // 3. En déduire le gradient et mettre à jour les 2N rotations.
+
+    Affine3f M;
+    M.setIdentity();
+
+    int n = int(_lengths.size()); // number of segments
+    for (int i = 0; i < n; ++i) {
+      M = M * AngleAxisf(_jointAngles(0, i), Vector3f::UnitZ());
+      M = M * AngleAxisf(_jointAngles(1, i), Vector3f::UnitY()); 
+      M = M * Translation3f(0, 0, _lengths[i]);
+    }
+
+    Vector3f currentPos = M.translation();
+
+    MatrixXf J = MatrixXf::Zero(3, 2 * n);
+    
+     M.setIdentity();
+    for (int i = 0; i < n; ++i) {
+      Vector3f jointPos = M.translation();
+      Vector3f jointAxis = M.linear() * Vector3f::UnitZ();
+      Vector3f segmentAxis = M.linear() * Vector3f::UnitY();
+
+      J.col(2 * i) = Vector3f(M(0, 2), M(1, 2), M(2, 2)).cross(currentPos - M.translation());
+      M = M * AngleAxisf(_jointAngles(0, i), Vector3f::UnitZ());
+      
+      J.col(2 * i + 1) = Vector3f(M(0, 1), M(1, 1), M(2, 1)).cross(currentPos- M.translation());
+      M = M * AngleAxisf(_jointAngles(1, i), Vector3f::UnitY()); 
+      M = M * Translation3f(0, 0, _lengths[i]);
+    }
+
+    VectorXf gradient = J.transpose() * (_IK_target - currentPos) * 0.01 * M_PI; 
+     Eigen::VectorXf::Map(_jointAngles.data(), 2*n) += gradient;
   }
   drawScene();
 }
